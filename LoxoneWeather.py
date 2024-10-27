@@ -23,7 +23,7 @@ LOXONE_WEATHER_SERVICE_PORT = 6066
 
 def downloadReport(longitude, latitude, asl):
     payload = {'appid': API_KEY, 'lang': 'cz', 'units': 'metric', 'lon': longitude, 'lat': latitude}
-    r = requests.get('https://api.openweathermap.org/data/2.5/onecall', params=payload)
+    r = requests.get('https://api.openweathermap.org/data/3.0/onecall', params=payload)
     if r.status_code == 200:
         ret = r.content
     else:
