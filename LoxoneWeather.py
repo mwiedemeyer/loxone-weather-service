@@ -21,9 +21,13 @@ API_KEY = os.environ.get('API_KEY')
 licenseExpiryDate = datetime.datetime(2049,12,31, 0, 0)
 LOXONE_WEATHER_SERVICE_PORT = 6066
 
+# Global cache for weather data
+weather_cache = {}
+CACHE_DURATION_SECONDS = 15 * 60  # 15 minutes
+
 def downloadReport(longitude, latitude, asl):
-    payload = {'appid': API_KEY, 'lang': 'cz', 'units': 'metric', 'lon': longitude, 'lat': latitude}
-    r = requests.get('https://api.openweathermap.org/data/3.0/onecall', params=payload)
+    payload = {'appid': API_KEY, 'lang': 'de', 'units': 'metric', 'lon': longitude, 'lat': latitude}
+    r = requests.get('https://api.openweathermap.org/data/3.0/onecall', params=payload, verify=False)
     if r.status_code == 200:
         ret = r.content
     else:
@@ -192,14 +196,21 @@ class Proxy(http.server.BaseHTTPRequestHandler):
             self.send_header('Connection', 'close')
             self.send_header('Transfer-Encoding', 'chunked')
             if 'asl' in query:
-                asl = query['asl'][0]#int(query['asl'][0])
+                asl = query['asl'][0]
             else:
                 asl = 0
             long,lat = query['coord'][0].split(',')
-            if os.path.isfile('weather.json'):
-                jsonReport = json.loads(open('weather.json').read())
+            cache_key = (long, lat, str(asl), str(query.get('format', [0])[0]))
+            now = datetime.datetime.now().timestamp()
+            cached = weather_cache.get(cache_key)
+            if cached and now - cached['timestamp'] < CACHE_DURATION_SECONDS:
+                jsonReport = cached['data']
             else:
-                jsonReport = json.loads(downloadReport(float(long), float(lat), asl))
+                if os.path.isfile('weather.json'):
+                    jsonReport = json.loads(open('weather.json').read())
+                else:
+                    jsonReport = json.loads(downloadReport(float(long), float(lat), asl))
+                weather_cache[cache_key] = {'data': jsonReport, 'timestamp': now}
             if 'format' in query and int(query['format'][0]) == 1:
                 reply = generateCSV(jsonReport, asl)
                 self.send_header('Content-Type', 'text/plain')
@@ -209,6 +220,23 @@ class Proxy(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(bytes("%x\r\n%s\r\n" % (len(reply), reply),"utf-8"))
             self.wfile.write(bytes("0\r\n\r\n","utf-8"))
+        elif path == '/json/':
+            self.send_response(200)
+            self.send_header('Vary', 'Accept-Encoding')
+            self.send_header('Connection', 'close')
+            self.send_header('Content-Type', 'application/json')
+            long,lat = query['coord'][0].split(',')
+            cache_key = (long, lat)
+            now = datetime.datetime.now().timestamp()
+            cached = weather_cache.get(cache_key)
+            if cached and now - cached['timestamp'] < CACHE_DURATION_SECONDS:
+                jsonReport = cached['data']
+            else:
+                jsonReport = json.loads(downloadReport(float(long), float(lat), 0))
+                weather_cache[cache_key] = {'data': jsonReport, 'timestamp': now}
+            reply = json.dumps(jsonReport)
+            self.end_headers()
+            self.wfile.write(bytes(reply,"utf-8"))
         else:
             print(path)
             print(urllib.parse.parse_qs(query))
